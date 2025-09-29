@@ -1,0 +1,22 @@
+experiment_name: "AEFC_vs_Baselines_Pendulum"
+algorithm: "AEFC"        # AEFC | FedAvg | FedProx
+env: "Pendulum-v1"
+num_agents: 10
+episodes: 600            # total episodes per agent
+sync_interval: 5         # episodes per federated round
+malicious_frac: 0.3      # 30% malicious clients
+attack_type: "poison"    # none | random | poison | reward_flip
+kappa: 0.2               # AEFC sparsification ratio (top-k fraction)
+mu: 0.001                # FedProx proximal term (ignored if not FedProx)
+seed: 42
+eval_episodes: 20
+actor_lr: 1e-3
+critic_lr: 1e-3
+batch_size: 128
+gamma: 0.99
+tau: 0.005               # target network soft update
+replay_size: 50000
+warmup_steps: 2000       # steps before learning
+noise_std: 0.1           # exploration noise std
+max_steps_per_episode: 200
+log_dir: "runs"
