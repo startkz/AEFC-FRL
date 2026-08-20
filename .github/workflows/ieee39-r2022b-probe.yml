@@ -9,6 +9,10 @@ on:
       - .github/workflows/ieee39-r2022b-probe.yml
   workflow_dispatch:
 
+concurrency:
+  group: ieee39-r2022b-migration-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
