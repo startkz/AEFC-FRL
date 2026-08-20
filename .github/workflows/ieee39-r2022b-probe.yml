@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - revision/ieee39-r2022b-actions
-    paths-ignore:
-      - results/ci/**
+    paths:
+      - matlab/**
+      - .github/workflows/ieee39-r2022b-probe.yml
   workflow_dispatch:
 
 permissions:
