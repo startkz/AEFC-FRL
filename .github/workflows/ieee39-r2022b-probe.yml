@@ -52,7 +52,7 @@ jobs:
         continue-on-error: true
         uses: matlab-actions/run-command@v3
         with:
-          command: addpath('matlab'); aefc_r2022b_migrate_full('external/IEEE39/model.zip','build/ieee39_r2022b_full');
+          command: addpath('matlab'); aefc_r2022b_migrate_full_safe('external/IEEE39/model.zip','build/ieee39_r2022b_full');
       - name: Persist compact evidence
         if: always()
         shell: bash
