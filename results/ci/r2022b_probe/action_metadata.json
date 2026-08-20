@@ -1,0 +1,9 @@
+{
+  "repository": "startkz/AEFC-FRL",
+  "commit": "0bb2400672bae887ddb167ed2ab1d468b8a6308c",
+  "run_id": "32342003874",
+  "run_attempt": "1",
+  "probe_outcome": "success",
+  "model_git_blob_sha": "41db586d592851c4a81205a4cc5c7c770b7a0c48",
+  "matlab_release": "R2022b"
+}

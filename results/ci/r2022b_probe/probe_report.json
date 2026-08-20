@@ -1,0 +1,60 @@
+{
+  "release": "2022b",
+  "version": "9.13.0.2698988 (R2022b) Update 10",
+  "products": [
+    {
+      "Name": "MATLAB",
+      "Version": "9.13",
+      "Release": "(R2022b)",
+      "Date": "13-May-2022"
+    },
+    {
+      "Name": "Simscape",
+      "Version": "5.4",
+      "Release": "(R2022b)",
+      "Date": "13-May-2022"
+    },
+    {
+      "Name": "Simscape Electrical",
+      "Version": "7.8",
+      "Release": "(R2022b)",
+      "Date": "13-May-2022"
+    },
+    {
+      "Name": "Simulink",
+      "Version": "10.6",
+      "Release": "(R2022b)",
+      "Date": "13-May-2022"
+    }
+  ],
+  "archive": "external/IEEE39/model.zip",
+  "modelFiles": [
+    "/home/runner/work/AEFC-FRL/AEFC-FRL/build/ieee39_r2022b_probe/source/model/IEEE39bus.mdl"
+  ],
+  "initScripts": [
+    "/home/runner/work/AEFC-FRL/AEFC-FRL/build/ieee39_r2022b_probe/source/model/IEEE39BusLineLength.m"
+  ],
+  "models": {
+    "source": "/home/runner/work/AEFC-FRL/AEFC-FRL/build/ieee39_r2022b_probe/source/model/IEEE39bus.mdl",
+    "name": "IEEE39bus",
+    "loadOk": true,
+    "blocks": 18886,
+    "powergui": 3,
+    "machines": 3266,
+    "runtimeBlocks": 12,
+    "updateOk": false,
+    "updateError": "Error due to multiple causes. | aefc_r2022b_probe:58 | command_82e0e563_6a07_444d_abaf_3f00549df715:1",
+    "saveUpgradeOk": true,
+    "upgradedFile": "build/ieee39_r2022b_probe/upgraded/IEEE39bus_R2022b.slx",
+    "upgradedUpdateOk": false,
+    "upgradedUpdateError": "Error due to multiple causes. | aefc_r2022b_probe:65 | command_82e0e563_6a07_444d_abaf_3f00549df715:1",
+    "smokeOk": false,
+    "smokeError": "",
+    "score": 6610.886
+  },
+  "initRun": [],
+  "initErrors": [],
+  "ranking": 1,
+  "nativeSmokeIndices": [],
+  "anyNativeSmoke": false
+}
