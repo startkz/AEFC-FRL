@@ -1,8 +1,1 @@
-{
-  "stage": "smoke-finished",
-  "success": false,
-  "smoke_outcome": "failure",
-  "run_id": "32347368594",
-  "source_sha": "e5ab621920ef97e88ea1ddab3af8711a785e107f",
-  "runner_repository": "startkz/AEFC-FRL"
-}
+{"stage":"runner-started","success":true,"run_id":"32347751380","source_sha":"d27b9acb7bee285b12861a4f0150038f70e590de"}
