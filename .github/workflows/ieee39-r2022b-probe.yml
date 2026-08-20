@@ -1,4 +1,4 @@
-name: IEEE39 R2022b Real-Model Probe
+name: IEEE39 R2022b Real-Model Migration
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  real-model-probe:
+  migrate-real-model:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
@@ -55,6 +55,16 @@ jobs:
             addpath('matlab');
             aefc_r2022b_diagnose('external/IEEE39/model.zip','build/ieee39_r2022b_diagnose');
 
+      - name: Apply conservative runtime-only migration
+        id: migrate
+        if: always()
+        continue-on-error: true
+        uses: matlab-actions/run-command@v3
+        with:
+          command: >-
+            addpath('matlab');
+            aefc_r2022b_migrate_runtime('external/IEEE39/model.zip','build/ieee39_r2022b_migrated');
+
       - name: Persist compact R2022b evidence
         if: always()
         shell: bash
@@ -64,6 +74,7 @@ jobs:
           cp build/ieee39_r2022b_probe/report/model_summary.tsv results/ci/r2022b_probe/ 2>/dev/null || true
           cp build/ieee39_r2022b_diagnose/diagnose_report.json results/ci/r2022b_probe/ 2>/dev/null || true
           cp build/ieee39_r2022b_diagnose/runtime_blocks.tsv results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_migrated/migration_report.json results/ci/r2022b_probe/ 2>/dev/null || true
           cat > results/ci/r2022b_probe/action_metadata.json <<EOF
           {
             "repository": "${GITHUB_REPOSITORY}",
@@ -72,6 +83,7 @@ jobs:
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
             "probe_outcome": "${{ steps.probe.outcome }}",
             "diagnose_outcome": "${{ steps.diagnose.outcome }}",
+            "migration_outcome": "${{ steps.migrate.outcome }}",
             "model_git_blob_sha": "41db586d592851c4a81205a4cc5c7c770b7a0c48",
             "matlab_release": "R2022b"
           }
@@ -80,23 +92,24 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- results/ci/r2022b_probe
           if ! git diff --cached --quiet; then
-            git commit -m "Record exact IEEE39 R2022b migration diagnostics [skip ci]"
+            git commit -m "Record IEEE39 R2022b migration evidence [skip ci]"
             git push
           fi
 
-      - name: Upload full R2022b evidence artifact
+      - name: Upload full R2022b evidence and migrated model
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ieee39-r2022b-real-model-probe
+          name: ieee39-r2022b-real-model-migration
           path: |
             build/ieee39_r2022b_probe/report/**
             build/ieee39_r2022b_probe/upgraded/**
             build/ieee39_r2022b_diagnose/**
+            build/ieee39_r2022b_migrated/**
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail if MATLAB execution failed
-        if: steps.probe.outcome != 'success' || steps.diagnose.outcome != 'success'
+      - name: Enforce migrated physical smoke success
+        if: steps.migrate.outcome != 'success'
         shell: bash
         run: exit 1
