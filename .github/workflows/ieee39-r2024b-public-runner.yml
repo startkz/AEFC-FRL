@@ -1,0 +1,98 @@
+name: IEEE39 R2024b Public Runner
+
+on:
+  push:
+    branches:
+      - experiment/ieee39-r2024b-runner
+    paths:
+      - matlab_r2024b/**
+      - .github/workflows/ieee39-r2024b-public-runner.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Mark runner started
+        shell: bash
+        run: |
+          mkdir -p results/ieee39_r2024b
+          printf '{"stage":"runner-started","success":true,"run_id":"%s","source_sha":"%s"}\n' "${{ github.run_id }}" "${{ github.sha }}" > results/ieee39_r2024b/gha_progress.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- results/ieee39_r2024b/gha_progress.json
+          git commit -m "IEEE39 public runner started [skip ci]"
+          git push origin HEAD:experiment/ieee39-r2024b-runner
+
+      - name: Set up MATLAB R2024b
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2024b
+          products: >-
+            Simulink
+            Simscape
+            Simscape_Electrical
+          cache: true
+
+      - name: Mark MATLAB setup complete
+        shell: bash
+        run: |
+          printf '{"stage":"matlab-setup-ok","success":true,"run_id":"%s","source_sha":"%s"}\n' "${{ github.run_id }}" "${{ github.sha }}" > results/ieee39_r2024b/gha_progress.json
+          git add -- results/ieee39_r2024b/gha_progress.json
+          git commit -m "IEEE39 public runner MATLAB setup complete [skip ci]"
+          git push origin HEAD:experiment/ieee39-r2024b-runner
+
+      - name: Run real IEEE39 bootstrap smoke test
+        id: smoke
+        continue-on-error: true
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab_r2024b'); aefc_ieee39_bootstrap
+
+      - name: Persist real runner evidence
+        if: always()
+        shell: bash
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          p = pathlib.Path('results/ieee39_r2024b/gha_progress.json')
+          outcome = os.environ.get('SMOKE_OUTCOME','unknown')
+          p.write_text(json.dumps({
+              'stage':'smoke-finished',
+              'success':outcome == 'success',
+              'smoke_outcome':outcome,
+              'run_id':'${{ github.run_id }}',
+              'source_sha':'${{ github.sha }}',
+              'runner_repository':'startkz/AEFC-FRL'
+          }, indent=2) + '\n', encoding='utf-8')
+          PY
+          git add -- results/ieee39_r2024b/gha_progress.json
+          if [ -d generated/IEEE39-R2024b ]; then git add -- generated/IEEE39-R2024b; fi
+          if [ -f results/ieee39_r2024b/bootstrap_inventory.json ]; then git add -- results/ieee39_r2024b/bootstrap_inventory.json; fi
+          if [ -f results/ieee39_r2024b/smoke_summary.json ]; then git add -- results/ieee39_r2024b/smoke_summary.json; fi
+          git commit -m "Persist public R2024b IEEE39 smoke evidence [skip ci]" || true
+          git push origin HEAD:experiment/ieee39-r2024b-runner
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ieee39-r2024b-public-smoke
+          path: |
+            results/ieee39_r2024b/**
+            generated/IEEE39-R2024b/**
+          if-no-files-found: warn
+
+      - name: Fail if smoke failed
+        if: steps.smoke.outcome != 'success'
+        shell: bash
+        run: exit 1
