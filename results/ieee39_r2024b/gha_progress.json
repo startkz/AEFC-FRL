@@ -1,1 +1,8 @@
-{"stage":"matlab-setup-ok","success":true,"run_id":"32347783867","source_sha":"eeaed8d4e064ea12ae8680fbff5fbef201ca03b6"}
+{
+  "stage": "smoke-finished",
+  "success": false,
+  "smoke_outcome": "failure",
+  "run_id": "32347783867",
+  "source_sha": "eeaed8d4e064ea12ae8680fbff5fbef201ca03b6",
+  "runner_repository": "startkz/AEFC-FRL"
+}

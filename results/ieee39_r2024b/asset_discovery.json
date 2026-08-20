@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "stage": "asset-discovery",
+  "matlab_release": "2024b",
+  "matlabroot": "/opt/hostedtoolcache/MATLAB/2024.2.999/x64",
+  "probe_file_exists": true,
+  "probe_contents": ""
+}
