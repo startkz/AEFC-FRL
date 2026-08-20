@@ -21,56 +21,39 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
-      - name: Checkout AEFC-FRL
-        uses: actions/checkout@v6
-
+      - uses: actions/checkout@v6
       - name: Fetch byte-identical public IEEE39 source
         shell: bash
         run: |
           rm -rf external/IEEE39
           git clone --depth 1 https://github.com/DESL-EPFL/IEEE-39-bus-power-system.git external/IEEE39
           test "$(git hash-object external/IEEE39/model.zip)" = "41db586d592851c4a81205a4cc5c7c770b7a0c48"
-
-      - name: Set up MATLAB R2022b with electrical modeling products
+      - name: Set up MATLAB R2022b
         uses: matlab-actions/setup-matlab@v3
         with:
           release: R2022b
-          products: >
-            Simulink
-            Simscape
-            Simscape_Electrical
-
-      - name: Probe original IEEE39 model under R2022b
+          products: Simulink Simscape Simscape_Electrical
+      - name: Probe original model
         id: probe
         continue-on-error: true
         uses: matlab-actions/run-command@v3
         with:
-          command: >-
-            addpath('matlab');
-            disp(version); disp(version('-release')); ver;
-            aefc_r2022b_probe('external/IEEE39/model.zip','build/ieee39_r2022b_probe');
-
-      - name: Capture exact runtime blocks and compile causes
+          command: addpath('matlab'); aefc_r2022b_probe('external/IEEE39/model.zip','build/ieee39_r2022b_probe');
+      - name: Capture exact compile causes
         id: diagnose
         if: always()
         continue-on-error: true
         uses: matlab-actions/run-command@v3
         with:
-          command: >-
-            addpath('matlab');
-            aefc_r2022b_diagnose('external/IEEE39/model.zip','build/ieee39_r2022b_diagnose');
-
-      - name: Apply conservative runtime-only migration
+          command: addpath('matlab'); aefc_r2022b_diagnose('external/IEEE39/model.zip','build/ieee39_r2022b_diagnose');
+      - name: Migrate ARTEMIS lines and RT-LAB interfaces
         id: migrate
         if: always()
         continue-on-error: true
         uses: matlab-actions/run-command@v3
         with:
-          command: >-
-            addpath('matlab');
-            aefc_r2022b_migrate_runtime('external/IEEE39/model.zip','build/ieee39_r2022b_migrated');
-
-      - name: Persist compact R2022b evidence
+          command: addpath('matlab'); aefc_r2022b_migrate_full('external/IEEE39/model.zip','build/ieee39_r2022b_full');
+      - name: Persist compact evidence
         if: always()
         shell: bash
         run: |
@@ -79,42 +62,26 @@ jobs:
           cp build/ieee39_r2022b_probe/report/model_summary.tsv results/ci/r2022b_probe/ 2>/dev/null || true
           cp build/ieee39_r2022b_diagnose/diagnose_report.json results/ci/r2022b_probe/ 2>/dev/null || true
           cp build/ieee39_r2022b_diagnose/runtime_blocks.tsv results/ci/r2022b_probe/ 2>/dev/null || true
-          cp build/ieee39_r2022b_migrated/migration_report.json results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_full/full_migration_report.json results/ci/r2022b_probe/ 2>/dev/null || true
           cat > results/ci/r2022b_probe/action_metadata.json <<EOF
-          {
-            "repository": "${GITHUB_REPOSITORY}",
-            "commit": "${GITHUB_SHA}",
-            "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
-            "probe_outcome": "${{ steps.probe.outcome }}",
-            "diagnose_outcome": "${{ steps.diagnose.outcome }}",
-            "migration_outcome": "${{ steps.migrate.outcome }}",
-            "model_git_blob_sha": "41db586d592851c4a81205a4cc5c7c770b7a0c48",
-            "matlab_release": "R2022b"
-          }
+          {"repository":"${GITHUB_REPOSITORY}","commit":"${GITHUB_SHA}","run_id":"${GITHUB_RUN_ID}","probe_outcome":"${{ steps.probe.outcome }}","diagnose_outcome":"${{ steps.diagnose.outcome }}","migration_outcome":"${{ steps.migrate.outcome }}","model_git_blob_sha":"41db586d592851c4a81205a4cc5c7c770b7a0c48","matlab_release":"R2022b"}
           EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- results/ci/r2022b_probe
-          if ! git diff --cached --quiet; then
-            git commit -m "Record IEEE39 R2022b migration evidence [skip ci]"
-            git push
-          fi
-
-      - name: Upload full R2022b evidence and migrated model
+          if ! git diff --cached --quiet; then git commit -m "Record IEEE39 R2022b full migration evidence [skip ci]"; git push; fi
+      - name: Upload migrated model and evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ieee39-r2022b-real-model-migration
+          name: ieee39-r2022b-full-migration
           path: |
             build/ieee39_r2022b_probe/report/**
-            build/ieee39_r2022b_probe/upgraded/**
             build/ieee39_r2022b_diagnose/**
-            build/ieee39_r2022b_migrated/**
+            build/ieee39_r2022b_full/**
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Enforce migrated physical smoke success
+      - name: Require real physical smoke
         if: steps.migrate.outcome != 'success'
         shell: bash
         run: exit 1
