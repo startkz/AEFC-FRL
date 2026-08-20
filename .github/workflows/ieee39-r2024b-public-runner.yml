@@ -41,12 +41,14 @@ jobs:
             Simscape_Electrical
           cache: true
 
-      - name: Mark MATLAB setup complete
+      - name: Probe installed IEEE39 assets
         shell: bash
         run: |
+          mkdir -p results/ieee39_r2024b
+          find /opt/hostedtoolcache/MATLAB -type f \( -iname '*IEEE39*' -o -iname '*39Bus*' -o -iname '*39-bus*' \) 2>/dev/null | sort > results/ieee39_r2024b/installed_ieee39_files.txt || true
           printf '{"stage":"matlab-setup-ok","success":true,"run_id":"%s","source_sha":"%s"}\n' "${{ github.run_id }}" "${{ github.sha }}" > results/ieee39_r2024b/gha_progress.json
-          git add -- results/ieee39_r2024b/gha_progress.json
-          git commit -m "IEEE39 public runner MATLAB setup complete [skip ci]"
+          git add -- results/ieee39_r2024b/gha_progress.json results/ieee39_r2024b/installed_ieee39_files.txt
+          git commit -m "Probe R2024b installed IEEE39 assets [skip ci]"
           git push origin HEAD:experiment/ieee39-r2024b-runner
 
       - name: Run real IEEE39 bootstrap smoke test
@@ -76,6 +78,7 @@ jobs:
           }, indent=2) + '\n', encoding='utf-8')
           PY
           git add -- results/ieee39_r2024b/gha_progress.json
+          if [ -f results/ieee39_r2024b/asset_discovery.json ]; then git add -- results/ieee39_r2024b/asset_discovery.json; fi
           if [ -d generated/IEEE39-R2024b ]; then git add -- generated/IEEE39-R2024b; fi
           if [ -f results/ieee39_r2024b/bootstrap_inventory.json ]; then git add -- results/ieee39_r2024b/bootstrap_inventory.json; fi
           if [ -f results/ieee39_r2024b/smoke_summary.json ]; then git add -- results/ieee39_r2024b/smoke_summary.json; fi
