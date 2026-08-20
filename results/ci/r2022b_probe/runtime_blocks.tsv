@@ -1,0 +1,13 @@
+path	block_type	mask_type	reference_block	link_status	token
+IEEE39bus/ARTEMIS Guide	Reference			unresolved	artemis
+IEEE39bus/SC_Console/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SM_measurement/OpComm2	Reference			unresolved	opcomm
+IEEE39bus/SM_measurement/Recording/OpTrigger1	Reference			unresolved	optrigger
+IEEE39bus/SM_measurement/Recording/OpTrigger2	Reference			unresolved	optrigger
+IEEE39bus/SM_measurement/Recording/OpTrigger4	Reference			unresolved	optrigger
+IEEE39bus/SS_EastSystem1/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SS_EastSystem2/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SS_NorthSystem1/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SS_NorthSystem2/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SS_WestSystem1/OpComm	Reference			unresolved	opcomm
+IEEE39bus/SS_WestSystem2/OpComm	Reference			unresolved	opcomm
