@@ -52,7 +52,7 @@ jobs:
         continue-on-error: true
         uses: matlab-actions/run-command@v3
         with:
-          command: addpath('matlab'); aefc_r2022b_migrate_full_safe('external/IEEE39/model.zip','build/ieee39_r2022b_full');
+          command: addpath('matlab'); aefc_r2022b_migrate_manifest('external/IEEE39/model.zip','build/ieee39_r2022b_full','configs/ieee39_r2022b_artemis_line_manifest.json');
       - name: Persist compact evidence
         if: always()
         shell: bash
@@ -69,7 +69,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- results/ci/r2022b_probe
-          if ! git diff --cached --quiet; then git commit -m "Record IEEE39 R2022b full migration evidence [skip ci]"; git push; fi
+          if ! git diff --cached --quiet; then git commit -m "Record IEEE39 R2022b manifest migration evidence [skip ci]"; git push; fi
       - name: Upload migrated model and evidence
         if: always()
         uses: actions/upload-artifact@v4
