@@ -22,6 +22,7 @@ jobs:
       - name: Fetch byte-identical public IEEE39 source
         shell: bash
         run: |
+          rm -rf external/IEEE39
           git clone --depth 1 https://github.com/DESL-EPFL/IEEE-39-bus-power-system.git external/IEEE39
           test "$(git hash-object external/IEEE39/model.zip)" = "41db586d592851c4a81205a4cc5c7c770b7a0c48"
 
@@ -44,14 +45,25 @@ jobs:
             disp(version); disp(version('-release')); ver;
             aefc_r2022b_probe('external/IEEE39/model.zip','build/ieee39_r2022b_probe');
 
-      - name: Persist compact probe evidence
+      - name: Capture exact runtime blocks and compile causes
+        id: diagnose
+        if: always()
+        continue-on-error: true
+        uses: matlab-actions/run-command@v3
+        with:
+          command: >-
+            addpath('matlab');
+            aefc_r2022b_diagnose('external/IEEE39/model.zip','build/ieee39_r2022b_diagnose');
+
+      - name: Persist compact R2022b evidence
         if: always()
         shell: bash
         run: |
           mkdir -p results/ci/r2022b_probe
           cp build/ieee39_r2022b_probe/report/probe_report.json results/ci/r2022b_probe/ 2>/dev/null || true
           cp build/ieee39_r2022b_probe/report/model_summary.tsv results/ci/r2022b_probe/ 2>/dev/null || true
-          cp build/ieee39_r2022b_probe/report/*_blocks.tsv results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_diagnose/diagnose_report.json results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_diagnose/runtime_blocks.tsv results/ci/r2022b_probe/ 2>/dev/null || true
           cat > results/ci/r2022b_probe/action_metadata.json <<EOF
           {
             "repository": "${GITHUB_REPOSITORY}",
@@ -59,6 +71,7 @@ jobs:
             "run_id": "${GITHUB_RUN_ID}",
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
             "probe_outcome": "${{ steps.probe.outcome }}",
+            "diagnose_outcome": "${{ steps.diagnose.outcome }}",
             "model_git_blob_sha": "41db586d592851c4a81205a4cc5c7c770b7a0c48",
             "matlab_release": "R2022b"
           }
@@ -67,11 +80,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- results/ci/r2022b_probe
           if ! git diff --cached --quiet; then
-            git commit -m "Record real IEEE39 R2022b probe evidence [skip ci]"
+            git commit -m "Record exact IEEE39 R2022b migration diagnostics [skip ci]"
             git push
           fi
 
-      - name: Upload full R2022b probe artifact
+      - name: Upload full R2022b evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -79,10 +92,11 @@ jobs:
           path: |
             build/ieee39_r2022b_probe/report/**
             build/ieee39_r2022b_probe/upgraded/**
+            build/ieee39_r2022b_diagnose/**
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail if MATLAB probe failed
-        if: steps.probe.outcome != 'success'
+      - name: Fail if MATLAB execution failed
+        if: steps.probe.outcome != 'success' || steps.diagnose.outcome != 'success'
         shell: bash
         run: exit 1
