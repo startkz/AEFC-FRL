@@ -1,0 +1,88 @@
+name: IEEE39 R2022b Real-Model Probe
+
+on:
+  push:
+    branches:
+      - revision/ieee39-r2022b-actions
+    paths-ignore:
+      - results/ci/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  real-model-probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout AEFC-FRL
+        uses: actions/checkout@v6
+
+      - name: Fetch byte-identical public IEEE39 source
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/DESL-EPFL/IEEE-39-bus-power-system.git external/IEEE39
+          test "$(git hash-object external/IEEE39/model.zip)" = "41db586d592851c4a81205a4cc5c7c770b7a0c48"
+
+      - name: Set up MATLAB R2022b with electrical modeling products
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2022b
+          products: >
+            Simulink
+            Simscape
+            Simscape_Electrical
+
+      - name: Probe original IEEE39 model under R2022b
+        id: probe
+        continue-on-error: true
+        uses: matlab-actions/run-command@v3
+        with:
+          command: >-
+            addpath('matlab');
+            disp(version); disp(version('-release')); ver;
+            aefc_r2022b_probe('external/IEEE39/model.zip','build/ieee39_r2022b_probe');
+
+      - name: Persist compact probe evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p results/ci/r2022b_probe
+          cp build/ieee39_r2022b_probe/report/probe_report.json results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_probe/report/model_summary.tsv results/ci/r2022b_probe/ 2>/dev/null || true
+          cp build/ieee39_r2022b_probe/report/*_blocks.tsv results/ci/r2022b_probe/ 2>/dev/null || true
+          cat > results/ci/r2022b_probe/action_metadata.json <<EOF
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "commit": "${GITHUB_SHA}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "probe_outcome": "${{ steps.probe.outcome }}",
+            "model_git_blob_sha": "41db586d592851c4a81205a4cc5c7c770b7a0c48",
+            "matlab_release": "R2022b"
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- results/ci/r2022b_probe
+          if ! git diff --cached --quiet; then
+            git commit -m "Record real IEEE39 R2022b probe evidence [skip ci]"
+            git push
+          fi
+
+      - name: Upload full R2022b probe artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ieee39-r2022b-real-model-probe
+          path: |
+            build/ieee39_r2022b_probe/report/**
+            build/ieee39_r2022b_probe/upgraded/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if MATLAB probe failed
+        if: steps.probe.outcome != 'success'
+        shell: bash
+        run: exit 1
