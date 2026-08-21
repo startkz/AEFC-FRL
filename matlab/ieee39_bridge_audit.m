@@ -9,9 +9,6 @@ sourceModelDir=fullfile(outRoot,'source','model');
 modelPath=fullfile(outRoot,'migrated','IEEE39bus_R2024a.slx');
 assert(exist(modelPath,'file')==2,'Migrated IEEE39 model not found. Run ieee39_migrate_r2024a first.');
 assert(exist(sourceModelDir,'dir')==7,'Migrated-model source directory is missing.');
-% The migrated SLX intentionally preserves the original initialization code.
-% A fresh GitHub Actions MATLAB process therefore needs the source helpers
-% (IEEE39BusLineLength.m and Dynamicload.mat) on the MATLAB path.
 addpath(sourceModelDir);
 [~,mdl,~]=fileparts(modelPath);
 load_system(modelPath);
@@ -28,17 +25,12 @@ report.agent_partition='generator-side physical controllers acting synchronously
 report.bridge_design=['Ten generator-side agents share one coupled plant. The audit discovers each ' ...
     'generator''s actual governor/power and excitation/voltage reference constants; names are not assumed homogeneous.'];
 
-% Build a per-generator diagnostic inventory first. In the source model G1
-% and G9 use different naming conventions from the other machines; treating
-% this as heterogeneity is safer than renaming or rewiring the physical model.
 controls=discover_generator_controls(mdl);
 report.generator_controls=controls;
 report.control_map_complete=all(arrayfun(@(x)~isempty(x.pref_path) && ~isempty(x.vref_path) && ...
     x.pref_numeric && x.vref_numeric,controls));
 report.uniform_control_names=all(strcmp({controls.pref_name},'Pref')) && all(strcmp({controls.vref_name},'Vref'));
 
-% Exact global observation anchors. Every generator must expose one rotor
-% speed tag and one generator-bus voltage tag in the real model.
 obs=cell(1,10); obsComplete=true;
 for g=1:10
     wtag=sprintf('Wm_G%d',g); vtag=sprintf('V_bus_G%d',g);
@@ -50,8 +42,6 @@ end
 report.observation_anchors=obs;
 report.observation_map_complete=obsComplete;
 
-% Inventory real machine/load/breaker assets for later safety and recovery
-% definitions. This is provenance only; no operational limit is invented.
 blocks=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block');
 machines={}; loads={}; breakers={};
 for k=1:numel(blocks)
@@ -69,22 +59,28 @@ report.machine_count=numel(machines); report.machines=machines;
 report.dynamic_load_count=numel(loads); report.dynamic_loads=loads;
 report.breaker_count=numel(breakers); report.breakers=breakers;
 
-% Real action-response checks cover one conventional mapping (G4) and the two
-% naming outliers (G1 and G9). Each smoke run changes the discovered Pref-like
-% reference only and must cause a finite non-zero Wm response in the same
-% coupled R2024a plant.
+% Create one reusable measurement tap. Repeatedly adding/deleting separate
+% From->To Workspace branches can leave compiled port connection state in SPS
+% models. Reusing one connected pair avoids topology churn between smoke runs.
+fromName='AEFC_Audit_Wm_From'; logName='AEFC_Audit_Wm_Log';
+fromPath=[mdl '/' fromName]; logPath=[mdl '/' logName];
+safe_delete(logPath); safe_delete(fromPath);
+add_block('simulink/Signal Routing/From',fromPath,'GotoTag','Wm_G1','Position',[80 80 175 100]);
+add_block('simulink/Sinks/To Workspace',logPath,'VariableName','audit_wm','SaveFormat','Timeseries','Position',[230 78 340 102]);
+phFrom=get_param(fromPath,'PortHandles'); phLog=get_param(logPath,'PortHandles');
+ln=get_param(phLog.Inport(1),'Line'); if ln~=-1, delete_line(ln); end
+add_line(mdl,phFrom.Outport(1),phLog.Inport(1),'autorouting','on');
+
+% Cover both naming outliers (G1/G9) and one conventional mapping (G4).
 smokeGenerators=[1 4 9]; smoke=cell(1,numel(smokeGenerators));
 for i=1:numel(smokeGenerators)
     g=smokeGenerators(i);
-    smoke{i}=action_response_smoke(mdl,controls(g),g,0.05,0.05);
+    smoke{i}=action_response_smoke(mdl,controls(g),g,0.05,0.05,fromPath,logPath);
 end
+safe_delete(logPath); safe_delete(fromPath);
 report.action_response_smoke=smoke;
 report.action_response_complete=all(cellfun(@(x)x.passed,smoke));
 
-% A valid bridge need not have homogeneous block names. It does require a
-% concrete tunable two-reference map for all generators, all observation tags,
-% ten physical machines, and observed plant response for canonical + outlier
-% mappings.
 report.bridge_contract_ready = report.control_map_complete && report.observation_map_complete && ...
     report.machine_count>=10 && report.action_response_complete;
 
@@ -96,6 +92,9 @@ for g=1:10
     fprintf('  G%d Pref-like=%s (%s) Vref-like=%s (%s)\n',g,controls(g).pref_name, ...
         controls(g).pref_value,controls(g).vref_name,controls(g).vref_value);
 end
+for i=1:numel(smoke)
+    fprintf('  smoke G%d deltaWm=%.12g passed=%d\n',smoke{i}.generator,smoke{i}.absolute_delta_wm,smoke{i}.passed);
+end
 close_system(mdl,0);
 if ~report.bridge_contract_ready
     error('AEFC:IEEE39BridgeAuditFailed','Real IEEE39 control/observation bridge audit failed; inspect bridge_audit.json.');
@@ -103,8 +102,6 @@ end
 end
 
 function controls=discover_generator_controls(mdl)
-% Record all reference-like constants per generator, then select the physical
-% power/governor and excitation references without imposing uniform naming.
 allc=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block','BlockType','Constant');
 template=struct('generator',0,'candidates',{{}},'pref_path','','pref_name','','pref_value','', ...
     'pref_numeric',false,'vref_path','','vref_name','','vref_value','','vref_numeric',false);
@@ -128,9 +125,8 @@ end
 end
 
 function [path,name,value]=choose_control(candidates,names,g,kind)
-% G9's source model calls its governor power reference wref1 and its
-% excitation voltage reference wref2. This is verified by their actual line
-% destinations in the source MDL (HTG port 2 and Excitation System port 1).
+% G9 uses wref1 as the hydraulic-governor power reference and wref2 as the
+% excitation voltage reference in the source MDL.
 if g==9
     if strcmp(kind,'pref'), names=[names {'wref1'}]; else, names=[names {'wref2'}]; end
 end
@@ -145,25 +141,21 @@ for q=1:numel(names)
 end
 end
 
-function r=action_response_smoke(mdl,control,g,deltaPref,stopTime)
+function r=action_response_smoke(mdl,control,g,deltaPref,stopTime,fromPath,logPath)
 r=struct('generator',g,'control_block',control.pref_path,'control_name',control.pref_name, ...
     'baseline_pref',control.pref_value,'delta_pref_pu',deltaPref,'stop_time_s',stopTime, ...
     'baseline_final_wm',NaN,'perturbed_final_wm',NaN,'absolute_delta_wm',NaN,'passed',false);
 if isempty(control.pref_path) || ~control.pref_numeric
     r.error='No numeric Pref-like control was discovered.'; return;
 end
-fromName=sprintf('AEFC_Audit_Wm_From_G%d',g); logName=sprintf('AEFC_Audit_Wm_Log_G%d',g);
-fromPath=[mdl '/' fromName]; logPath=[mdl '/' logName]; varName=sprintf('audit_wm_g%d',g);
-safe_delete(logPath); safe_delete(fromPath);
-add_block('simulink/Signal Routing/From',fromPath,'GotoTag',sprintf('Wm_G%d',g),'Position',[80 80 175 100]);
-add_block('simulink/Sinks/To Workspace',logPath,'VariableName',varName,'SaveFormat','Timeseries','Position',[230 78 340 102]);
-add_line(mdl,[fromName '/1'],[logName '/1'],'autorouting','on');
 oldPref=get_param(control.pref_path,'Value'); oldStop=get_param(mdl,'StopTime');
 try
+    set_param(fromPath,'GotoTag',sprintf('Wm_G%d',g));
+    set_param(logPath,'VariableName','audit_wm');
     set_param(mdl,'StopTime',sprintf('%.17g',stopTime));
-    baseOut=sim(mdl,'ReturnWorkspaceOutputs','on'); bfinal=last_numeric_value(baseOut.get(varName));
+    baseOut=sim(mdl,'ReturnWorkspaceOutputs','on'); bfinal=last_numeric_value(baseOut.get('audit_wm'));
     p0=str2double(oldPref); set_param(control.pref_path,'Value',sprintf('%.17g',p0+deltaPref));
-    pertOut=sim(mdl,'ReturnWorkspaceOutputs','on'); pfinal=last_numeric_value(pertOut.get(varName));
+    pertOut=sim(mdl,'ReturnWorkspaceOutputs','on'); pfinal=last_numeric_value(pertOut.get('audit_wm'));
     d=abs(pfinal-bfinal);
     r.baseline_final_wm=bfinal; r.perturbed_final_wm=pfinal; r.absolute_delta_wm=d;
     r.passed=isfinite(d) && d>1e-10;
@@ -172,7 +164,6 @@ catch ME
 end
 try, set_param(control.pref_path,'Value',oldPref); catch, end
 try, set_param(mdl,'StopTime',oldStop); catch, end
-safe_delete(logPath); safe_delete(fromPath);
 end
 
 function g=generator_from_path(p)
