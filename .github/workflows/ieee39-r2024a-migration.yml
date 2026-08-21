@@ -7,12 +7,14 @@ on:
       - revision/ieee39-r2024a-fullstack
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_bridge_audit.m'
       - '.github/workflows/ieee39-r2024a-migration.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_bridge_audit.m'
       - '.github/workflows/ieee39-r2024a-migration.yml'
 
 permissions:
@@ -51,7 +53,12 @@ jobs:
         with:
           command: addpath('matlab'); ieee39_migrate_r2024a
 
-      - name: Upload migrated model and audit report
+      - name: Audit real control and observation bridge
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_bridge_audit
+
+      - name: Upload migrated model and audit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
