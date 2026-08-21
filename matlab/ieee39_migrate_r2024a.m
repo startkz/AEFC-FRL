@@ -24,74 +24,63 @@ files=[dir(fullfile(srcRoot,'**','*.slx'));dir(fullfile(srcRoot,'**','*.mdl'))];
 assert(~isempty(files),'No Simulink model found.'); [~,ix]=max([files.bytes]); f=files(ix);
 primaryPath=fullfile(f.folder,f.name); [~,mdl,~]=fileparts(primaryPath);
 report.primary_source_model=strrep(primaryPath,[repoRoot filesep],'');
+
+% Parse the unresolved ARTEMIS line mask values directly from the source MDL.
+% R2024a can load an unresolved Reference block, but it cannot query its
+% obsolete mask parameters without the third-party library.
+lineRecords=parse_artemis_line_records(primaryPath);
+report.source_line_parameter_records=numel(lineRecords);
 load_system(primaryPath);
 
-% Preserve the original model initialization explicitly; the legacy masked
-% ARTEMIS initialization block is not required after migration.
 set_param(mdl,'InitFcn','Ts=25e-6; IEEE39BusLineLength; vNomHV=345E3; fNom=50; load(''Dynamicload.mat'');');
-
-% Remove execution/UI-only RT-LAB infrastructure with no plant outputs.
 safe_delete([mdl '/ARTEMIS Guide']);
 safe_delete([mdl '/Model Initialization']);
 safe_delete([mdl '/SC_Console']);
 safe_delete([mdl '/SM_measurement/Recording']);
 
-% Legacy copied powerlib_extras blocks contain their implementation in the
-% MDL. Detach only their obsolete library metadata; do not alter contents.
-allb=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block');
-detached={};
+% Keep embedded legacy controller implementations while removing dead links.
+allb=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block'); detached={};
 for k=1:numel(allb)
     b=allb{k};
     try
         bt=get_param(b,'BlockType'); ls=get_param(b,'LinkStatus'); anc=get_param(b,'AncestorBlock');
-        if strcmp(bt,'SubSystem') && any(strcmpi(ls,{'inactive','unresolved'})) && ~isempty(anc)
-            if startsWith(anc,'powerlib') || startsWith(anc,'powerlib_extras')
-                set_param(b,'LinkStatus','none'); detached{end+1}=b; %#ok<AGROW>
-            end
+        if strcmp(bt,'SubSystem') && any(strcmpi(ls,{'inactive','unresolved'})) && ~isempty(anc) && ...
+                (startsWith(anc,'powerlib') || startsWith(anc,'powerlib_extras'))
+            set_param(b,'LinkStatus','none'); detached{end+1}=b; %#ok<AGROW>
         end
-    catch
-    end
+    catch, end
 end
 report.detached_embedded_legacy_subsystems=detached;
 
-% Replace every ARTEMIS distributed-parameter line by the native SPS block,
-% preserving R/L/C, line length, frequency, phase count and orientation.
+% Replace ARTEMIS distributed lines with native SPS Bergeron lines using the
+% exact R/L/C/length values stored in the original MDL.
 load_system('powerlib');
 artLines=find_artemis_lines(mdl); report.artemis_line_count=numel(artLines);
+assert(numel(artLines)==numel(lineRecords),'Source line record count does not match unresolved line count.');
 lineAudit=cell(1,numel(artLines));
 for k=1:numel(artLines)
-    old=artLines{k}; parent=get_param(old,'Parent'); name=get_param(old,'Name');
-    vals=struct('Resistance',get_param(old,'Resistance'),'Inductance',get_param(old,'Inductance'), ...
-        'Capacitance',get_param(old,'Capacitance'),'Length',get_param(old,'Length'), ...
-        'Frequency',get_param(old,'Frequency'),'Phases',get_param(old,'Phases'), ...
-        'Measurements',get_param(old,'Measurements'));
+    old=artLines{k}; parent=get_param(old,'Parent'); name=get_param(old,'Name'); vals=line_record_by_name(lineRecords,name);
     pos=get_param(old,'Position'); orient=get_param(old,'Orientation');
     replace_block(parent,'Name',name,'powerlib/Elements/Distributed Parameters Line','noprompt');
     nb=[parent '/' name]; set_param(nb,'Position',pos,'Orientation',orient);
-    fn=fieldnames(vals);
-    for q=1:numel(fn), try, set_param(nb,fn{q},vals.(fn{q})); catch, end, end
+    set_if_present(nb,'Resistance',vals.Resistance); set_if_present(nb,'Inductance',vals.Inductance);
+    set_if_present(nb,'Capacitance',vals.Capacitance); set_if_present(nb,'Length',vals.Length);
+    set_if_present(nb,'Frequency',vals.Frequency); set_if_present(nb,'Phases',vals.Phases);
+    set_if_present(nb,'Measurements',vals.Measurements);
     lineAudit{k}=struct('block',nb,'Resistance',vals.Resistance,'Inductance',vals.Inductance, ...
         'Capacitance',vals.Capacitance,'Length',vals.Length);
 end
 report.line_replacements=lineAudit;
 
-% RT-LAB OpComm is a partition communication boundary. In a monolithic
-% offline simulation, replace it with paired identity channels. This keeps
-% the exact signal graph while removing real-time partition transport.
+% Remove RT-LAB transport while keeping its signal topology exactly paired.
 opcomms=find_rt_opcomm(mdl); report.opcomm_count=numel(opcomms);
 for k=numel(opcomms):-1:1, replace_opcomm_identity(opcomms{k}); end
 
-% Enforce the original SPS discrete integration step through the existing
-% powergui rather than ARTEMIS solver orchestration.
 pg=[mdl '/powergui'];
-if getSimulinkBlockHandle(pg)>0
-    try, set_param(pg,'SimulationMode','Discrete','SampleTime','Ts'); catch, end
-end
+if getSimulinkBlockHandle(pg)>0, try, set_param(pg,'SimulationMode','Discrete','SampleTime','Ts'); catch, end, end
 
-migratedPath=fullfile(migRoot,[mdl '_R2024a.slx']);
-save_system(mdl,migratedPath); close_system(mdl,0);
+migratedPath=fullfile(migRoot,[mdl '_R2024a.slx']); save_system(mdl,migratedPath); close_system(mdl,0);
 report.migrated_model=strrep(migratedPath,[repoRoot filesep],'');
-
 [~,mm,~]=fileparts(migratedPath); load_system(migratedPath);
 try
     set_param(mm,'SimulationCommand','update'); report.primary_update_ok=true;
@@ -107,65 +96,55 @@ if report.primary_update_ok
         report.short_sim_error=full_error(ME);
     end
 end
-
-% Audit unresolved links after migration.
 report.remaining_unresolved={};
 try
     b=find_system(mm,'LookUnderMasks','all','FollowLinks','on','Type','Block');
     for k=1:numel(b)
-        try
-            ls=get_param(b{k},'LinkStatus');
-            if any(strcmpi(ls,{'unresolved','inactive'})), report.remaining_unresolved{end+1}=b{k}; end %#ok<AGROW>
-        catch, end
+        try, ls=get_param(b{k},'LinkStatus'); if any(strcmpi(ls,{'unresolved','inactive'})), report.remaining_unresolved{end+1}=b{k}; end, catch, end %#ok<AGROW>
     end
 catch, end
-close_system(mm,0);
-write_report(fullfile(outRoot,'migration_report.json'),report);
-fprintf('IEEE39 migrated: lines=%d opcomm=%d runnable=%d real_sim=%d\n', ...
- report.artemis_line_count,report.opcomm_count,report.runnable,report.real_simulation_completed);
-if ~report.runnable
-    error('AEFC:IEEE39MigrationBlocked','R2024a model did not complete a real Simulink simulation; inspect migration_report.json.');
-end
+close_system(mm,0); write_report(fullfile(outRoot,'migration_report.json'),report);
+fprintf('IEEE39 migrated: lines=%d opcomm=%d runnable=%d real_sim=%d\n',report.artemis_line_count,report.opcomm_count,report.runnable,report.real_simulation_completed);
+if ~report.runnable, error('AEFC:IEEE39MigrationBlocked','R2024a model did not complete a real Simulink simulation; inspect migration_report.json.'); end
 end
 
+function records=parse_artemis_line_records(path)
+txt=fileread(path); parts=regexp(txt,'(?m)^\s*Block \{','split'); records=struct('Name',{},'Resistance',{},'Inductance',{},'Capacitance',{},'Length',{},'Frequency',{},'Phases',{},'Measurements',{});
+for i=1:numel(parts)
+    p=parts{i};
+    if contains(p,'SourceBlock') && contains(p,'op_dpl_lib/Distributed Parameters Line')
+        r.Name=qvalue(p,'Name'); r.Resistance=qvalue(p,'Resistance'); r.Inductance=qvalue(p,'Inductance');
+        r.Capacitance=qvalue(p,'Capacitance'); r.Length=qvalue(p,'Length'); r.Frequency=qvalue(p,'Frequency');
+        r.Phases=qvalue(p,'Phases'); r.Measurements=qvalue(p,'Measurements'); records(end+1)=r; %#ok<AGROW>
+    end
+end
+end
+function v=qvalue(txt,key)
+t=regexp(txt,['(?m)^\s*' regexptranslate('escape',key) '\s+"([^"]*)"'],'tokens','once'); assert(~isempty(t),['Missing MDL parameter ' key]); v=t{1};
+end
+function r=line_record_by_name(records,name)
+idx=find(strcmp({records.Name},name)); assert(numel(idx)==1,['Line parameter record is not unique: ' name]); r=records(idx);
+end
+function set_if_present(b,p,v)
+try, set_param(b,p,v); catch ME, warning('AEFC:ParamMigration','Could not set %s on %s: %s',p,b,ME.message); end
+end
 function x=find_artemis_lines(mdl)
 b=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block'); x={};
-for i=1:numel(b)
-    try
-        if strcmp(get_param(b{i},'BlockType'),'Reference') && ...
-                strcmp(get_param(b{i},'SourceBlock'),'op_dpl_lib/Distributed Parameters Line')
-            x{end+1}=b{i}; %#ok<AGROW>
-        end
-    catch, end
+for i=1:numel(b), try, if strcmp(get_param(b{i},'BlockType'),'Reference') && strcmp(get_param(b{i},'SourceBlock'),'op_dpl_lib/Distributed Parameters Line'), x{end+1}=b{i}; end, catch, end, end %#ok<AGROW>
 end
-end
-
 function x=find_rt_opcomm(mdl)
 b=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block'); x={};
-for i=1:numel(b)
-    try
-        if strcmp(get_param(b{i},'BlockType'),'Reference') && strcmp(get_param(b{i},'SourceBlock'),'rtlab/OpComm')
-            x{end+1}=b{i}; %#ok<AGROW>
-        end
-    catch, end
+for i=1:numel(b), try, if strcmp(get_param(b{i},'BlockType'),'Reference') && strcmp(get_param(b{i},'SourceBlock'),'rtlab/OpComm'), x{end+1}=b{i}; end, catch, end, end %#ok<AGROW>
 end
-end
-
 function replace_opcomm_identity(blk)
-parent=get_param(blk,'Parent'); name=get_param(blk,'Name'); pos=get_param(blk,'Position'); orient=get_param(blk,'Orientation');
-ph=get_param(blk,'PortHandles'); nin=numel(ph.Inport); nout=numel(ph.Outport); assert(nin==nout,'OpComm port mismatch');
+parent=get_param(blk,'Parent'); name=get_param(blk,'Name'); pos=get_param(blk,'Position'); orient=get_param(blk,'Orientation'); ph=get_param(blk,'PortHandles'); nin=numel(ph.Inport); nout=numel(ph.Outport); assert(nin==nout,'OpComm port mismatch');
 src=cell(1,nin); dst=cell(1,nout);
-for i=1:nin
-    ln=get_param(ph.Inport(i),'Line'); if ln~=-1, src{i}=get_param(ln,'SrcPortHandle'); else, src{i}=[]; end
-end
-for i=1:nout
-    ln=get_param(ph.Outport(i),'Line'); if ln~=-1, dst{i}=get_param(ln,'DstPortHandle'); else, dst{i}=[]; end
-end
+for i=1:nin, ln=get_param(ph.Inport(i),'Line'); if ln~=-1, src{i}=get_param(ln,'SrcPortHandle'); else, src{i}=[]; end, end
+for i=1:nout, ln=get_param(ph.Outport(i),'Line'); if ln~=-1, dst{i}=get_param(ln,'DstPortHandle'); else, dst{i}=[]; end, end
 delete_block(blk); nb=[parent '/' name]; add_block('built-in/Subsystem',nb,'Position',pos,'Orientation',orient);
 for i=1:nin
-    in=[nb '/In' num2str(i)]; out=[nb '/Out' num2str(i)];
-    add_block('built-in/Inport',in,'Port',num2str(i),'Position',[30 30+45*(i-1) 60 44+45*(i-1)]);
-    add_block('built-in/Outport',out,'Port',num2str(i),'Position',[160 30+45*(i-1) 190 44+45*(i-1)]);
+    add_block('built-in/Inport',[nb '/In' num2str(i)],'Port',num2str(i),'Position',[30 30+45*(i-1) 60 44+45*(i-1)]);
+    add_block('built-in/Outport',[nb '/Out' num2str(i)],'Port',num2str(i),'Position',[160 30+45*(i-1) 190 44+45*(i-1)]);
     add_line(nb,['In' num2str(i) '/1'],['Out' num2str(i) '/1']);
 end
 nph=get_param(nb,'PortHandles');
@@ -174,16 +153,6 @@ for i=1:nin
     if ~isempty(dst{i}), for j=1:numel(dst{i}), try, add_line(parent,nph.Outport(i),dst{i}(j),'autorouting','on'); catch, end, end, end
 end
 end
-
-function safe_delete(p)
-if getSimulinkBlockHandle(p)>0, delete_block(p); end
-end
-function s=full_error(ME)
-s=ME.message;
-try
-    for i=1:numel(ME.cause), s=[s ' | cause: ' full_error(ME.cause{i})]; end %#ok<AGROW>
-catch, end
-end
-function write_report(p,r)
-fid=fopen(p,'w'); assert(fid>0); fwrite(fid,jsonencode(r,'PrettyPrint',true)); fclose(fid);
-end
+function safe_delete(p), if getSimulinkBlockHandle(p)>0, delete_block(p); end, end
+function s=full_error(ME), s=ME.message; try, for i=1:numel(ME.cause), s=[s ' | cause: ' full_error(ME.cause{i})]; end, catch, end, end %#ok<AGROW>
+function write_report(p,r), fid=fopen(p,'w'); assert(fid>0); fwrite(fid,jsonencode(r,'PrettyPrint',true)); fclose(fid); end
