@@ -25,9 +25,9 @@ assert(~isempty(files),'No Simulink model found.'); [~,ix]=max([files.bytes]); f
 primaryPath=fullfile(f.folder,f.name); [~,mdl,~]=fileparts(primaryPath);
 report.primary_source_model=strrep(primaryPath,[repoRoot filesep],'');
 
-% Parse the unresolved ARTEMIS line mask values directly from the source MDL.
-% R2024a can load an unresolved Reference block, but it cannot query its
-% obsolete mask parameters without the third-party library.
+% Parse unresolved ARTEMIS line mask values directly from the source MDL.
+% R2021a+ can load an unresolved Reference block, but obsolete mask values
+% cannot be queried without the third-party ARTEMIS library.
 lineRecords=parse_artemis_line_records(primaryPath);
 report.source_line_parameter_records=numel(lineRecords);
 load_system(primaryPath);
@@ -52,29 +52,39 @@ for k=1:numel(allb)
 end
 report.detached_embedded_legacy_subsystems=detached;
 
+% Do not hard-code an internal SPS library path. MathWorks has moved block
+% folders between releases while keeping the public block name. Discover the
+% native block at runtime so the migration remains usable on R2021a+.
+dplTemplate=find_sps_library_block('Distributed Parameters Line');
+report.sps_distributed_line_template=dplTemplate;
+fprintf('Using native SPS Distributed Parameters Line template: %s\n',dplTemplate);
+
 % Replace ARTEMIS distributed lines with native SPS Bergeron lines using the
 % exact R/L/C/length values stored in the original MDL.
-load_system('powerlib');
 artLines=find_artemis_lines(mdl); report.artemis_line_count=numel(artLines);
 assert(numel(artLines)==numel(lineRecords),'Source line record count does not match unresolved line count.');
 lineAudit=cell(1,numel(artLines));
 for k=1:numel(artLines)
     old=artLines{k}; parent=get_param(old,'Parent'); name=get_param(old,'Name'); vals=line_record_by_name(lineRecords,name);
     pos=get_param(old,'Position'); orient=get_param(old,'Orientation');
-    replace_block(parent,'Name',name,'powerlib/Elements/Distributed Parameters Line','noprompt');
+    replace_block(parent,'Name',name,dplTemplate,'noprompt');
     nb=[parent '/' name]; set_param(nb,'Position',pos,'Orientation',orient);
     set_if_present(nb,'Resistance',vals.Resistance); set_if_present(nb,'Inductance',vals.Inductance);
     set_if_present(nb,'Capacitance',vals.Capacitance); set_if_present(nb,'Length',vals.Length);
     set_if_present(nb,'Frequency',vals.Frequency); set_if_present(nb,'Phases',vals.Phases);
     set_if_present(nb,'Measurements',vals.Measurements);
     lineAudit{k}=struct('block',nb,'Resistance',vals.Resistance,'Inductance',vals.Inductance, ...
-        'Capacitance',vals.Capacitance,'Length',vals.Length);
+        'Capacitance',vals.Capacitance,'Length',vals.Length,'template',dplTemplate);
 end
 report.line_replacements=lineAudit;
+report.remaining_artemis_lines_after_replacement=numel(find_artemis_lines(mdl));
+assert(report.remaining_artemis_lines_after_replacement==0,'ARTEMIS distributed-line blocks remain after migration.');
 
 % Remove RT-LAB transport while keeping its signal topology exactly paired.
 opcomms=find_rt_opcomm(mdl); report.opcomm_count=numel(opcomms);
 for k=numel(opcomms):-1:1, replace_opcomm_identity(opcomms{k}); end
+report.remaining_rt_opcomm_after_replacement=numel(find_rt_opcomm(mdl));
+assert(report.remaining_rt_opcomm_after_replacement==0,'RT-LAB OpComm blocks remain after migration.');
 
 pg=[mdl '/powergui'];
 if getSimulinkBlockHandle(pg)>0, try, set_param(pg,'SimulationMode','Discrete','SampleTime','Ts'); catch, end, end
@@ -104,8 +114,30 @@ try
     end
 catch, end
 close_system(mm,0); write_report(fullfile(outRoot,'migration_report.json'),report);
-fprintf('IEEE39 migrated: lines=%d opcomm=%d runnable=%d real_sim=%d\n',report.artemis_line_count,report.opcomm_count,report.runnable,report.real_simulation_completed);
+fprintf('IEEE39 migrated: lines=%d opcomm=%d update=%d runnable=%d real_sim=%d\n', ...
+ report.artemis_line_count,report.opcomm_count,logical_field(report,'primary_update_ok'),report.runnable,report.real_simulation_completed);
 if ~report.runnable, error('AEFC:IEEE39MigrationBlocked','R2024a model did not complete a real Simulink simulation; inspect migration_report.json.'); end
+end
+
+function p=find_sps_library_block(blockName)
+% Discover by public block name instead of release-specific internal path.
+libs={'powerlib','ee_lib'}; hits={};
+for i=1:numel(libs)
+    lib=libs{i};
+    try
+        load_system(lib);
+        h=find_system(lib,'LookUnderMasks','all','FollowLinks','on','Type','Block','Name',blockName);
+        hits=[hits; h(:)]; %#ok<AGROW>
+    catch ME
+        warning('AEFC:SPSLibrarySearch','Could not search %s: %s',lib,ME.message);
+    end
+end
+hits=unique(hits,'stable');
+assert(~isempty(hits),'Could not locate native SPS block named "%s" in installed Simscape Electrical libraries.',blockName);
+% Prefer the shallowest/shortest library path; hidden implementation copies
+% can have the same block name several levels below a masked library block.
+depth=cellfun(@(s)numel(strfind(s,'/')),hits); lens=cellfun(@numel,hits);
+[~,ix]=sortrows([depth(:) lens(:)],[1 2]); p=hits{ix(1)};
 end
 
 function records=parse_artemis_line_records(path)
@@ -153,6 +185,7 @@ for i=1:nin
     if ~isempty(dst{i}), for j=1:numel(dst{i}), try, add_line(parent,nph.Outport(i),dst{i}(j),'autorouting','on'); catch, end, end, end
 end
 end
+function v=logical_field(s,f), if isfield(s,f), v=logical(s.(f)); else, v=false; end, end
 function safe_delete(p), if getSimulinkBlockHandle(p)>0, delete_block(p); end, end
 function s=full_error(ME), s=ME.message; try, for i=1:numel(ME.cause), s=[s ' | cause: ' full_error(ME.cause{i})]; end, catch, end, end %#ok<AGROW>
 function write_report(p,r), fid=fopen(p,'w'); assert(fid>0); fwrite(fid,jsonencode(r,'PrettyPrint',true)); fclose(fid); end
