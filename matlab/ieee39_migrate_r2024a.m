@@ -25,9 +25,6 @@ assert(~isempty(files),'No Simulink model found.'); [~,ix]=max([files.bytes]); f
 primaryPath=fullfile(f.folder,f.name); [~,mdl,~]=fileparts(primaryPath);
 report.primary_source_model=strrep(primaryPath,[repoRoot filesep],'');
 
-% Parse unresolved ARTEMIS line mask values directly from the source MDL.
-% R2021a+ can load an unresolved Reference block, but obsolete mask values
-% cannot be queried without the third-party ARTEMIS library.
 lineRecords=parse_artemis_line_records(primaryPath);
 report.source_line_parameter_records=numel(lineRecords);
 load_system(primaryPath);
@@ -38,7 +35,6 @@ safe_delete([mdl '/Model Initialization']);
 safe_delete([mdl '/SC_Console']);
 safe_delete([mdl '/SM_measurement/Recording']);
 
-% Keep embedded legacy controller implementations while removing dead links.
 allb=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block'); detached={};
 for k=1:numel(allb)
     b=allb{k};
@@ -52,15 +48,10 @@ for k=1:numel(allb)
 end
 report.detached_embedded_legacy_subsystems=detached;
 
-% Do not hard-code an internal SPS library path. MathWorks has moved block
-% folders between releases while keeping the public block name. Discover the
-% native block at runtime so the migration remains usable on R2021a+.
 dplTemplate=find_sps_library_block('Distributed Parameters Line');
 report.sps_distributed_line_template=dplTemplate;
 fprintf('Using native SPS Distributed Parameters Line template: %s\n',dplTemplate);
 
-% Replace ARTEMIS distributed lines with native SPS Bergeron lines using the
-% exact R/L/C/length values stored in the original MDL.
 artLines=find_artemis_lines(mdl); report.artemis_line_count=numel(artLines);
 assert(numel(artLines)==numel(lineRecords),'Source line record count does not match unresolved line count.');
 lineAudit=cell(1,numel(artLines));
@@ -80,7 +71,6 @@ report.line_replacements=lineAudit;
 report.remaining_artemis_lines_after_replacement=numel(find_artemis_lines(mdl));
 assert(report.remaining_artemis_lines_after_replacement==0,'ARTEMIS distributed-line blocks remain after migration.');
 
-% Remove RT-LAB transport while keeping its signal topology exactly paired.
 opcomms=find_rt_opcomm(mdl); report.opcomm_count=numel(opcomms);
 for k=numel(opcomms):-1:1, replace_opcomm_identity(opcomms{k}); end
 report.remaining_rt_opcomm_after_replacement=numel(find_rt_opcomm(mdl));
@@ -120,8 +110,17 @@ if ~report.runnable, error('AEFC:IEEE39MigrationBlocked','R2024a model did not c
 end
 
 function p=find_sps_library_block(blockName)
-% Discover by public block name instead of release-specific internal path.
-libs={'powerlib','ee_lib'}; hits={};
+% Modern SPS uses sps_lib. Prefer the canonical public Library Browser path,
+% then fall back to release-specific discovery for older R2021a+ layouts.
+canonical=['sps_lib/Power Grid Elements/' blockName];
+try
+    load_system('sps_lib');
+    get_param(canonical,'Handle');
+    p=canonical; return;
+catch ME
+    warning('AEFC:SPSCanonicalPath','Canonical SPS path unavailable: %s',ME.message);
+end
+libs={'sps_lib','powerlib','ee_lib'}; hits={};
 for i=1:numel(libs)
     lib=libs{i};
     try
@@ -134,8 +133,6 @@ for i=1:numel(libs)
 end
 hits=unique(hits,'stable');
 assert(~isempty(hits),'Could not locate native SPS block named "%s" in installed Simscape Electrical libraries.',blockName);
-% Prefer the shallowest/shortest library path; hidden implementation copies
-% can have the same block name several levels below a masked library block.
 depth=cellfun(@(s)numel(strfind(s,'/')),hits); lens=cellfun(@numel,hits);
 [~,ix]=sortrows([depth(:) lens(:)],[1 2]); p=hits{ix(1)};
 end
