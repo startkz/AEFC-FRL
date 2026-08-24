@@ -8,6 +8,7 @@ OPEN_RE = re.compile(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{\s*$')
 PARAM_RE = re.compile(r'^\s*([^\s{}]+)\s+(.*)$')
 Q_RE = re.compile(r'^"(.*)"\s*$')
 GEN_RE = re.compile(r'/GT\s*(\d+)')
+V_BUS_RE = re.compile(r'^V_bus_G(\d+)$')
 
 
 def decode_value(raw: str) -> str:
@@ -20,6 +21,13 @@ def as_float(expr: str):
     try:
         return float(expr)
     except Exception:
+        try:
+            # The voltage-base expressions in the released MDL are simple
+            # scientific-notation scalars such as 345e3 and 16.5e3.
+            if re.fullmatch(r'[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?', expr.strip()):
+                return float(expr)
+        except Exception:
+            pass
         return None
 
 
@@ -120,6 +128,42 @@ def main():
             'vref_expr': v['params'].get('Vref',''),
         })
 
+    # Freeze the exact voltage-observation semantics used by the bridge.
+    # V_bus_G* is emitted by a Three-Phase V-I Measurement block with Vpu=off,
+    # so normalization must use the measurement block's own Vbase rather than
+    # the nearby generator Load Flow Bus base.
+    voltage_observations = []
+    for b in blocks:
+        p = b['params']
+        label = p.get('LabelV', '')
+        mm = V_BUS_RE.match(label)
+        if not mm:
+            continue
+        g = int(mm.group(1))
+        vb_expr = p.get('Vbase', '')
+        vb = as_float(vb_expr)
+        if vb is None or vb <= 0:
+            raise SystemExit(f'{label}: invalid voltage-measurement Vbase {vb_expr!r}')
+        voltage_observations.append({
+            'generator': g,
+            'tag': label,
+            'measurement_path': b['path'],
+            'source_block': p.get('SourceBlock',''),
+            'source_type': p.get('SourceType',''),
+            'voltage_measurement': p.get('VoltageMeasurement',''),
+            'vpu': p.get('Vpu',''),
+            'vbase_expr': vb_expr,
+            'vbase_volts': vb,
+            'output_type': p.get('OutputType',''),
+        })
+    voltage_observations.sort(key=lambda x: x['generator'])
+    if [x['generator'] for x in voltage_observations] != list(range(1, 11)):
+        raise SystemExit(f'Expected exactly V_bus_G1..G10 observations, got {voltage_observations}')
+    if any(x['voltage_measurement'].lower() != 'phase-to-ground' for x in voltage_observations):
+        raise SystemExit('Unexpected voltage measurement mode in V_bus_G* provenance')
+    if any(x['vpu'].lower() != 'off' for x in voltage_observations):
+        raise SystemExit('V_bus_G* must remain raw-voltage measurements (Vpu=off)')
+
     opcomm = []
     for b in blocks:
         if b['params'].get('SourceBlock') == 'rtlab/OpComm':
@@ -137,7 +181,7 @@ def main():
         bp = [float(x) for x in re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', '48.00' + m.group(1))]
     minv = [float(x) for x in re.findall(r'MinimumVoltage\s+"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"', text)]
     out = {
-        'schema': 'aefc.ieee39.source_provenance.v1',
+        'schema': 'aefc.ieee39.source_provenance.v2',
         'parser': 'raw_mdl_brace_stack_no_library_loading',
         'source_zip': str(args.zip).replace('\\','/'),
         'source_git_blob_expected': args.expected_git_blob,
@@ -146,6 +190,7 @@ def main():
         'nominal_frequency_hz': 50.0,
         'native_step_s': 25e-6,
         'generators': generators,
+        'voltage_observations': voltage_observations,
         'opcomm': opcomm,
         'native_limits': {
             'load_shedding_breakpoints_hz': bp,
@@ -154,9 +199,11 @@ def main():
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(out, indent=2), encoding='utf-8')
-    print(f'IEEE39 source provenance: generators={len(generators)} opcomm={len(opcomm)} -> {args.output}')
+    print(f'IEEE39 source provenance: generators={len(generators)} voltage_obs={len(voltage_observations)} opcomm={len(opcomm)} -> {args.output}')
     for g in generators:
-        print(f"  G{g['generator']}: Vbase={g['vbase_volts']:.9g} VLF={g['vlf_pu']:.9g} machine={g['machine_path']}")
+        print(f"  G{g['generator']}: Vbase(loadflow)={g['vbase_volts']:.9g} VLF={g['vlf_pu']:.9g} machine={g['machine_path']}")
+    for v in voltage_observations:
+        print(f"  {v['tag']}: Vbase(measurement)={v['vbase_volts']:.9g} mode={v['voltage_measurement']} Vpu={v['vpu']}")
 
 if __name__ == '__main__':
     main()
