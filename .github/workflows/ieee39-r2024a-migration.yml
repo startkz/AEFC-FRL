@@ -8,6 +8,7 @@ on:
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_migrate_r2024a_ci.m'
+      - 'matlab/ieee39_apply_machine_solver_variant.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -18,6 +19,7 @@ on:
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_migrate_r2024a_ci.m'
+      - 'matlab/ieee39_apply_machine_solver_variant.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -73,6 +75,11 @@ jobs:
         uses: matlab-actions/run-command@v3
         with:
           command: addpath('matlab'); ieee39_migrate_r2024a_ci
+
+      - name: Apply robust synchronous-machine solver diagnostic
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_apply_machine_solver_variant
 
       - name: Audit real control and observation bridge
         uses: matlab-actions/run-command@v3
