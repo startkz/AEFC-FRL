@@ -7,6 +7,7 @@ on:
       - revision/ieee39-r2024a-fullstack
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -16,6 +17,7 @@ on:
       - main
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -67,10 +69,10 @@ jobs:
             Simscape_Electrical
           cache: true
 
-      - name: Migrate model and perform real short simulation
+      - name: Migrate model with provenance-driven diagnostic path
         uses: matlab-actions/run-command@v3
         with:
-          command: addpath('matlab'); ieee39_migrate_r2024a
+          command: addpath('matlab'); ieee39_migrate_r2024a_ci
 
       - name: Audit real control and observation bridge
         uses: matlab-actions/run-command@v3
