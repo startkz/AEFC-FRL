@@ -83,7 +83,12 @@ jobs:
         with:
           command: addpath('matlab'); ieee39_machine_solver_inventory
 
-      - name: Audit unchanged migrated clean baseline
+      - name: Apply exact G1 IterativeModel single-variable A/B
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_apply_machine_solver_variant
+
+      - name: Audit exact G1 solver A/B clean baseline
         uses: matlab-actions/run-command@v3
         with:
           command: addpath('matlab'); ieee39_bridge_audit
