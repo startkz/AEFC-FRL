@@ -8,6 +8,8 @@ on:
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_bridge_audit.m'
+      - 'matlab/aefc_ieee39_gateway_r2024a.m'
+      - 'scripts/ieee39_source_provenance.py'
       - '.github/workflows/ieee39-r2024a-migration.yml'
   pull_request:
     branches:
@@ -15,6 +17,8 @@ on:
     paths:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_bridge_audit.m'
+      - 'matlab/aefc_ieee39_gateway_r2024a.m'
+      - 'scripts/ieee39_source_provenance.py'
       - '.github/workflows/ieee39-r2024a-migration.yml'
 
 permissions:
@@ -31,12 +35,27 @@ jobs:
       - name: Fetch the exact public IEEE39 source archive
         shell: bash
         run: |
-          mkdir -p Figures
+          mkdir -p Figures build
           curl -fL --retry 3 \
             https://raw.githubusercontent.com/DESL-EPFL/IEEE-39-bus-power-system/master/model.zip \
             -o Figures/IEEE-39-bus-power.zip
           test "$(git hash-object Figures/IEEE-39-bus-power.zip)" = "41db586d592851c4a81205a4cc5c7c770b7a0c48"
           ls -lh Figures/IEEE-39-bus-power.zip
+
+      - name: Parse legacy source provenance without loading old libraries
+        shell: bash
+        run: |
+          python scripts/ieee39_source_provenance.py \
+            --zip Figures/IEEE-39-bus-power.zip \
+            --output build/ieee39_source_provenance.json
+          python - <<'PY'
+          import json
+          p=json.load(open('build/ieee39_source_provenance.json'))
+          assert len(p['generators']) == 10
+          assert len(p['opcomm']) == 8
+          assert all(g['vbase_volts'] > 0 for g in p['generators'])
+          print('source provenance contract passed')
+          PY
 
       - name: Set up MATLAB R2024a and Simulink electrical stack
         uses: matlab-actions/setup-matlab@v3
@@ -63,6 +82,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ieee39-r2024a-migration-audit
-          path: build/ieee39_r2024a
+          path: |
+            build/ieee39_r2024a
+            build/ieee39_source_provenance.json
           if-no-files-found: warn
           retention-days: 14
