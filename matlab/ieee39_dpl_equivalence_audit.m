@@ -1,6 +1,6 @@
 function ieee39_dpl_equivalence_audit
 % Read-only equivalence audit for the 34 legacy ARTEMIS DPL replacements.
-% This audit does not tune the plant.  It distinguishes parameter/units/
+% This audit does not tune the plant. It distinguishes parameter/units/
 % topology preservation from the harder algorithm/initialization equivalence
 % between the legacy ARTEMIS travelling-wave implementation and R2024a SPS.
 
@@ -9,14 +9,19 @@ outRoot=fullfile(repoRoot,'build','ieee39_r2024a');
 sourceDir=fullfile(outRoot,'source','model');
 sourceMdl=fullfile(sourceDir,'IEEE39bus.mdl');
 modelPath=fullfile(outRoot,'migrated','IEEE39bus_R2024a.slx');
+migPath=fullfile(outRoot,'migration_report.json');
 assert(exist(sourceMdl,'file')==2,'Source IEEE39bus.mdl not found.');
 assert(exist(modelPath,'file')==2,'Migrated IEEE39 model not found.');
+assert(exist(migPath,'file')==2,'Migration report not found.');
+mig=jsondecode(fileread(migPath));
+assert(isfield(mig,'line_replacements') && numel(mig.line_replacements)==34, ...
+    'Migration report must contain 34 line replacements.');
 
 addpath(sourceDir);
 oldDir=pwd; dirCleanup=onCleanup(@()restore_dir(oldDir)); %#ok<NASGU>
 cd(sourceDir);
 % Resolve the released line-length expressions in the same workspace used by
-% the model callbacks.  The script contains only released model constants.
+% the model callbacks. The script contains only released model constants.
 run('IEEE39BusLineLength.m');
 [~,mdl,~]=fileparts(modelPath);
 load_system(modelPath);
@@ -29,21 +34,11 @@ records=cell(1,numel(src));
 paramPass=true; physicalPass=true; topologyObservable=true; topologyPass=true;
 for k=1:numel(src)
     s=src(k);
-    hits=find_system(mdl,'LookUnderMasks','all','FollowLinks','on','Type','Block','Name',s.Name);
-    % The released IEEE39 line names are unique.  Filter out any accidental
-    % same-name non-DPL blocks if a future release adds one.
-    keep={};
-    for q=1:numel(hits)
-        try
-            st=get_param(hits{q},'SourceType'); sb=get_param(hits{q},'SourceBlock');
-            if contains(lower([st ' ' sb]),'distributed parameters line')
-                keep{end+1}=hits{q}; %#ok<AGROW>
-            end
-        catch
-        end
-    end
-    assert(numel(keep)==1,'Migrated SPS DPL not unique for %s (found %d).',s.Name,numel(keep));
-    b=keep{1};
+    % Use the exact in-place block path recorded by the migration itself.
+    % Do not depend on release-specific SourceType/SourceBlock strings of the
+    % native SPS mask, which changed across MATLAB releases.
+    b=block_from_migration_report(mig.line_replacements,s.Name,mdl);
+    assert(getSimulinkBlockHandle(b)>0,'Migrated SPS DPL path does not exist: %s',b);
 
     m=struct;
     m.Resistance=get_param(b,'Resistance');
@@ -107,6 +102,7 @@ report.release=version('-release');
 report.read_only=true;
 report.source_line_count=numel(src);
 report.migrated_line_count=numel(records);
+report.block_location_source='migration_report.line_replacements[].block';
 report.parameter_equivalence_passed=paramPass;
 report.sequence_order='[positive, zero]';
 report.units=struct('resistance','ohm/km','inductance','H/km','capacitance','F/km','length','km');
@@ -132,6 +128,20 @@ fprintf('  v_pos=[%.6g, %.6g] km/s delay/Ts=[%.6g, %.6g]\n',min(vel),max(vel),mi
 if ~paramPass || ~physicalPass || (topologyObservable && ~topologyPass)
     error('AEFC:IEEE39DPLEquivalenceFailed','DPL parameter/propagation/topology audit failed.');
 end
+end
+
+function b=block_from_migration_report(repls,name,mdl)
+hits={};
+for i=1:numel(repls)
+    p=repls(i).block;
+    if endsWith(p,['/' name])
+        hits{end+1}=p; %#ok<AGROW>
+    end
+end
+assert(numel(hits)==1,'Migration report path not unique for %s (found %d).',name,numel(hits));
+p=hits{1}; prefix='IEEE39bus';
+assert(startsWith(p,prefix),'Unexpected migration block path: %s',p);
+b=[mdl extractAfter(p,strlength(prefix))];
 end
 
 function records=parse_artemis_line_records(path)
@@ -185,7 +195,7 @@ try
         details{i}=struct('index',i,'type',typ,'position',pos,'src_block',src,'dst_block',dst,'connected',c);
     end
     s=struct('port_count',numel(pc),'connected_port_count',connected,'details',{details});
-    % A three-phase DPL exposes six electrical terminals.  If R2024a exposes
+    % A three-phase DPL exposes six electrical terminals. If R2024a exposes
     % connectivity through PortConnectivity, all six must remain connected.
     ok=(numel(pc)>=6 && connected>=6);
 catch
