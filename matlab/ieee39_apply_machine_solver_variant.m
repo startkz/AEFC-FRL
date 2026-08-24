@@ -1,9 +1,9 @@
 function ieee39_apply_machine_solver_variant
-% Diagnostic A/B variant for R2024a numerical fidelity.
-% Change only the discrete solver used by the ten SPS synchronous machines.
-% Do not change network parameters, controller gains, audit thresholds, or
-% the OpComm surrogate. The strict bridge audit decides whether this variant
-% improves the clean physical baseline.
+% Exact single-variable A/B for the R2024a IEEE39 migration.
+% Inventory evidence shows that only G1 uses IterativeModel='Forward Euler';
+% G2--G10 already use 'Trapezoidal non iterative'.  Keep every other solver
+% parameter unchanged and modify only G1.IterativeModel.  The strict bridge
+% audit decides whether this single change improves the clean physical baseline.
 
 repoRoot=pwd;
 outRoot=fullfile(repoRoot,'build','ieee39_r2024a');
@@ -14,8 +14,6 @@ assert(exist(modelPath,'file')==2,'Migrated IEEE39 model not found.');
 assert(exist(sourceModelDir,'dir')==7,'Migrated source-model support directory not found.');
 assert(exist(provPath,'file')==2,'IEEE39 source provenance JSON not found.');
 
-% The migrated model retains the original callbacks. Resolve their support
-% files before loading so PostLoadFcn can execute exactly as in migration/audit.
 addpath(sourceModelDir);
 oldDir=pwd;
 cdCleanup=onCleanup(@()restore_dir(oldDir)); %#ok<NASGU>
@@ -24,9 +22,6 @@ cd(sourceModelDir);
 load_system(modelPath);
 modelCleanup=onCleanup(@()safe_close(mdl)); %#ok<NASGU>
 
-% Do not rediscover legacy-linked machine metadata through unavailable
-% libraries. Reuse the already audited raw-MDL provenance and map only the
-% top-level model name IEEE39bus -> IEEE39bus_R2024a.
 prov=jsondecode(fileread(provPath));
 assert(numel(prov.generators)==10,'Expected 10 generators in source provenance.');
 machines=cell(1,10);
@@ -38,51 +33,59 @@ for g=1:10
     assert(getSimulinkBlockHandle(machines{g})>0,'Mapped synchronous machine does not exist: %s',machines{g});
 end
 
-records=cell(1,numel(machines));
-for i=1:numel(machines)
-    b=machines{i};
-    dp=get_param(b,'DialogParameters'); names=fieldnames(dp);
-    solverField=''; before='';
-    % Prefer a parameter whose prompt explicitly names the discrete solver.
-    for j=1:numel(names)
-        f=names{j}; prompt='';
-        try, prompt=dp.(f).Prompt; catch, end
-        if contains(lower(prompt),'discrete solver')
-            solverField=f;
-            try, before=get_param(b,f); catch, before=''; end
-            break;
-        end
-    end
-    % Release-specific fallback: locate the current integration method value.
-    if isempty(solverField)
-        for j=1:numel(names)
-            f=names{j}; v='';
-            try, v=get_param(b,f); catch, continue; end
-            if ischar(v) && (strcmpi(strtrim(v),'Forward Euler') || ...
-                    contains(lower(v),'trapezoidal') || contains(lower(v),'backward euler'))
-                solverField=f; before=v; break;
-            end
-        end
-    end
-    assert(~isempty(solverField),'Could not identify discrete solver parameter for %s.',b);
-    set_param(b,solverField,'Trapezoidal robust');
-    after=get_param(b,solverField);
-    assert(strcmpi(strtrim(after),'Trapezoidal robust'),'Robust solver was not applied to %s.',b);
-    records{i}=struct('generator',i,'block',b,'parameter',solverField,'before',before,'after',after);
+% Record the complete solver-related state before modification so the A/B
+% remains auditable and proves that exactly one mask value changed.
+before=cell(1,10);
+for g=1:10
+    before{g}=struct('generator',g, ...
+        'IterativeModel',get_param(machines{g},'IterativeModel'), ...
+        'IterativeDiscreteModel',get_param(machines{g},'IterativeDiscreteModel'));
 end
+assert(strcmpi(strtrim(before{1}.IterativeModel),'Forward Euler'), ...
+    'Inventory contract changed: G1 IterativeModel is %s, expected Forward Euler.',before{1}.IterativeModel);
+for g=2:10
+    assert(strcmpi(strtrim(before{g}.IterativeModel),'Trapezoidal non iterative'), ...
+        'Inventory contract changed: G%d IterativeModel is %s.',g,before{g}.IterativeModel);
+end
+for g=1:10
+    assert(strcmpi(strtrim(before{g}.IterativeDiscreteModel),'Trapezoidal non iterative'), ...
+        'Inventory contract changed: G%d IterativeDiscreteModel is %s.',g,before{g}.IterativeDiscreteModel);
+end
+
+% Exact single variable under test.
+set_param(machines{1},'IterativeModel','Trapezoidal non iterative');
+assert(strcmpi(strtrim(get_param(machines{1},'IterativeModel')),'Trapezoidal non iterative'), ...
+    'Failed to apply the G1 IterativeModel A/B variant.');
+
+after=cell(1,10);
+changed=0;
+for g=1:10
+    after{g}=struct('generator',g, ...
+        'IterativeModel',get_param(machines{g},'IterativeModel'), ...
+        'IterativeDiscreteModel',get_param(machines{g},'IterativeDiscreteModel'));
+    changed=changed + ~strcmp(before{g}.IterativeModel,after{g}.IterativeModel) ...
+        + ~strcmp(before{g}.IterativeDiscreteModel,after{g}.IterativeDiscreteModel);
+end
+assert(changed==1,'Single-variable contract violated: %d solver-related values changed.',changed);
 
 save_system(mdl,modelPath);
 report=struct('release',version('-release'), ...
-    'variant','synchronous_machine_trapezoidal_robust', ...
-    'machine_count',numel(machines), ...
-    'records',{records}, ...
+    'variant','G1_IterativeModel_forward_euler_to_trapezoidal_non_iterative', ...
+    'changed_generator',1, ...
+    'changed_parameter','IterativeModel', ...
+    'before_value','Forward Euler', ...
+    'after_value','Trapezoidal non iterative', ...
+    'solver_related_values_changed',changed, ...
+    'before',{before}, ...
+    'after',{after}, ...
     'machine_paths_from_raw_mdl_provenance',true, ...
     'network_parameters_changed',false, ...
     'controller_parameters_changed',false, ...
     'audit_thresholds_changed',false, ...
+    'opcomm_surrogate_changed',false, ...
     'timestamp_utc',char(datetime('now','TimeZone','UTC','Format','yyyy-MM-dd''T''HH:mm:ss''Z''')));
 write_report(fullfile(outRoot,'machine_solver_variant.json'),report);
-fprintf('IEEE39 machine solver variant: machines=%d solver=Trapezoidal robust\n',numel(machines));
+fprintf('IEEE39 exact solver A/B: G1 IterativeModel Forward Euler -> Trapezoidal non iterative; changed=%d\n',changed);
 end
 
 function restore_dir(p)
