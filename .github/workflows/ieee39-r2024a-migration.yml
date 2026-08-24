@@ -10,6 +10,8 @@ on:
       - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_apply_machine_solver_variant.m'
       - 'matlab/ieee39_machine_solver_inventory.m'
+      - 'matlab/ieee39_dpl_equivalence_audit.m'
+      - 'matlab/ieee39_migration_physical_gate.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -22,6 +24,8 @@ on:
       - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_apply_machine_solver_variant.m'
       - 'matlab/ieee39_machine_solver_inventory.m'
+      - 'matlab/ieee39_dpl_equivalence_audit.m'
+      - 'matlab/ieee39_migration_physical_gate.m'
       - 'matlab/ieee39_bridge_audit.m'
       - 'matlab/aefc_ieee39_gateway_r2024a.m'
       - 'scripts/ieee39_source_provenance.py'
@@ -58,9 +62,12 @@ jobs:
           import json
           p=json.load(open('build/ieee39_source_provenance.json'))
           assert len(p['generators']) == 10
+          assert len(p['voltage_observations']) == 10
           assert len(p['opcomm']) == 8
           assert all(g['vbase_volts'] > 0 for g in p['generators'])
-          print('source provenance contract passed')
+          assert all(v['vbase_volts'] > 0 for v in p['voltage_observations'])
+          assert [v['generator'] for v in p['voltage_observations']] == list(range(1,11))
+          print('source provenance contract v2 passed')
           PY
 
       - name: Set up MATLAB R2024a and Simulink electrical stack
@@ -83,15 +90,15 @@ jobs:
         with:
           command: addpath('matlab'); ieee39_machine_solver_inventory
 
-      - name: Apply exact G1 IterativeModel single-variable A/B
+      - name: Audit 34 ARTEMIS-to-SPS DPL replacements
         uses: matlab-actions/run-command@v3
         with:
-          command: addpath('matlab'); ieee39_apply_machine_solver_variant
+          command: addpath('matlab'); ieee39_dpl_equivalence_audit
 
-      - name: Audit exact G1 solver A/B clean baseline
+      - name: Run provenance-correct clean physical gate
         uses: matlab-actions/run-command@v3
         with:
-          command: addpath('matlab'); ieee39_bridge_audit
+          command: addpath('matlab'); ieee39_migration_physical_gate
 
       - name: Upload migrated model and audit reports
         if: always()
