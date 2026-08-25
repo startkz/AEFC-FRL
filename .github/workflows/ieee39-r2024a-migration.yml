@@ -9,6 +9,7 @@ on:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_apply_machine_solver_variant.m'
+      - 'matlab/ieee39_apply_powergui_frequency_variant.m'
       - 'matlab/ieee39_machine_solver_inventory.m'
       - 'matlab/ieee39_dpl_equivalence_audit.m'
       - 'matlab/ieee39_migration_physical_gate.m'
@@ -23,6 +24,7 @@ on:
       - 'matlab/ieee39_migrate_r2024a.m'
       - 'matlab/ieee39_migrate_r2024a_ci.m'
       - 'matlab/ieee39_apply_machine_solver_variant.m'
+      - 'matlab/ieee39_apply_powergui_frequency_variant.m'
       - 'matlab/ieee39_machine_solver_inventory.m'
       - 'matlab/ieee39_dpl_equivalence_audit.m'
       - 'matlab/ieee39_migration_physical_gate.m'
@@ -95,7 +97,12 @@ jobs:
         with:
           command: addpath('matlab'); ieee39_dpl_equivalence_audit
 
-      - name: Run provenance-correct clean physical gate
+      - name: Apply exact powergui 60-to-50 Hz initialization A/B
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_apply_powergui_frequency_variant
+
+      - name: Run powergui-frequency A/B clean physical gate
         uses: matlab-actions/run-command@v3
         with:
           command: addpath('matlab'); ieee39_migration_physical_gate
