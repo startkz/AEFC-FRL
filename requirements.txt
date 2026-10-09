@@ -1,7 +1,12 @@
+# Tested reference environment: Python 3.9
+
+# Core training and diagnostics
 torch==2.0.1
 numpy==1.24.4
+scipy==1.10.1
 PyYAML==6.0.2
 tqdm==4.66.4
 gym==0.26.2
-gym-notices==0.0.8
+
+# Figure-generation scripts
 matplotlib==3.7.3
