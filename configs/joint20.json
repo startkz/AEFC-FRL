@@ -1,0 +1,42 @@
+{
+  "backend": "reduced_order_mechanism_test",
+  "seeds": 20,
+  "steps": 120,
+  "clients": 7,
+  "byzantine_clients": 2,
+  "common_support_k": 3,
+  "safe_state_limit": 0.35,
+  "attack": {
+    "start": 24,
+    "end": 72,
+    "observation_eps": 0.32,
+    "control_eps": 0.10,
+    "byzantine_fraction": 0.30,
+    "model_replacement_scale": 6.0,
+    "stale_delay": 7
+  },
+  "patbu": {
+    "beta_age": 0.08,
+    "residual_scale": 0.25,
+    "lambda_b": 0.72,
+    "obs_gain": 0.20,
+    "knowledge_gain": 0.08
+  },
+  "gate": {
+    "rho_max": 0.55,
+    "risk_margin": 0.05,
+    "q_min": 0.18
+  },
+  "adaptation": {
+    "eta": 0.04,
+    "clip_norm": 0.20,
+    "trust_region": 0.035,
+    "q_min": 0.18
+  },
+  "shield": {
+    "post_attack_budget": 0.10,
+    "state_disturbance_budget": 0.006,
+    "action_limit": 0.80,
+    "dynamics_gain": 0.24
+  }
+}
