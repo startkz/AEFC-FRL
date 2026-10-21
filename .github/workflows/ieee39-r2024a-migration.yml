@@ -1,0 +1,121 @@
+name: IEEE39 R2024a Migration Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - revision/ieee39-r2024a-fullstack
+    paths:
+      - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_migrate_r2024a_ci.m'
+      - 'matlab/ieee39_apply_machine_solver_variant.m'
+      - 'matlab/ieee39_apply_powergui_frequency_variant.m'
+      - 'matlab/ieee39_machine_solver_inventory.m'
+      - 'matlab/ieee39_dpl_equivalence_audit.m'
+      - 'matlab/ieee39_dpl_dynamic_state_audit.m'
+      - 'matlab/ieee39_migration_physical_gate.m'
+      - 'matlab/ieee39_bridge_audit.m'
+      - 'matlab/aefc_ieee39_gateway_r2024a.m'
+      - 'scripts/ieee39_source_provenance.py'
+      - '.github/workflows/ieee39-r2024a-migration.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'matlab/ieee39_migrate_r2024a.m'
+      - 'matlab/ieee39_migrate_r2024a_ci.m'
+      - 'matlab/ieee39_apply_machine_solver_variant.m'
+      - 'matlab/ieee39_apply_powergui_frequency_variant.m'
+      - 'matlab/ieee39_machine_solver_inventory.m'
+      - 'matlab/ieee39_dpl_equivalence_audit.m'
+      - 'matlab/ieee39_dpl_dynamic_state_audit.m'
+      - 'matlab/ieee39_migration_physical_gate.m'
+      - 'matlab/ieee39_bridge_audit.m'
+      - 'matlab/aefc_ieee39_gateway_r2024a.m'
+      - 'scripts/ieee39_source_provenance.py'
+      - '.github/workflows/ieee39-r2024a-migration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-and-simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout execution branch
+        uses: actions/checkout@v4
+
+      - name: Fetch the exact public IEEE39 source archive
+        shell: bash
+        run: |
+          mkdir -p Figures build
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/DESL-EPFL/IEEE-39-bus-power-system/master/model.zip \
+            -o Figures/IEEE-39-bus-power.zip
+          test "$(git hash-object Figures/IEEE-39-bus-power.zip)" = "41db586d592851c4a81205a4cc5c7c770b7a0c48"
+          ls -lh Figures/IEEE-39-bus-power.zip
+
+      - name: Parse legacy source provenance without loading old libraries
+        shell: bash
+        run: |
+          python scripts/ieee39_source_provenance.py \
+            --zip Figures/IEEE-39-bus-power.zip \
+            --output build/ieee39_source_provenance.json
+          python - <<'PY'
+          import json
+          p=json.load(open('build/ieee39_source_provenance.json'))
+          assert len(p['generators']) == 10
+          assert len(p['voltage_observations']) == 10
+          assert len(p['opcomm']) == 8
+          assert all(g['vbase_volts'] > 0 for g in p['generators'])
+          assert all(v['vbase_volts'] > 0 for v in p['voltage_observations'])
+          assert [v['generator'] for v in p['voltage_observations']] == list(range(1,11))
+          print('source provenance contract v2 passed')
+          PY
+
+      - name: Set up MATLAB R2024a and Simulink electrical stack
+        uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2024a
+          products: >
+            Simulink
+            Simscape
+            Simscape_Electrical
+          cache: true
+
+      - name: Migrate model with provenance-driven diagnostic path
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_migrate_r2024a_ci
+
+      - name: Inventory synchronous-machine solver parameters
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_machine_solver_inventory
+
+      - name: Audit 34 ARTEMIS-to-SPS DPL replacements
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_dpl_equivalence_audit
+
+      - name: Audit native SPS DPL initial states and dynamic onset
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_dpl_dynamic_state_audit
+
+      - name: Run unchanged migrated clean physical gate
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('matlab'); ieee39_migration_physical_gate
+
+      - name: Upload migrated model and audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ieee39-r2024a-migration-audit
+          path: |
+            build/ieee39_r2024a
+            build/ieee39_source_provenance.json
+          if-no-files-found: warn
+          retention-days: 14
