@@ -1,0 +1,5 @@
+# Development bridge only; not the original manuscript reference environment.
+# Python 3.11 GitHub-hosted runner as verified 2026-11-02.
+pandapower==3.2.1
+torch==2.5.1
+numpy>=1.26,<3
