@@ -1,0 +1,81 @@
+name: Traffic full AEFC-FRL no-oracle matched-seed evidence
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'experiment/traffic-full-no-oracle-*'
+    paths:
+      - 'experiments/traffic_full/**'
+      - '.github/workflows/traffic-full-no-oracle.yml'
+permissions:
+  contents: read
+concurrency:
+  group: traffic-full-no-oracle-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        method: ['AEFC-FRL','FedRL','AEFC-no-adapter','AEFC-no-proto']
+        seed: [11,13,17,19,23,29,31,37,41,43,47,53,59,61,67]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==1.26.4
+          python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Unit tests for the unprivileged traffic interface
+        run: python experiments/traffic_full/test_traffic.py
+      - name: Full 80-round training and held-out evaluation
+        shell: bash
+        run: |
+          python experiments/traffic_full/train.py \
+            --method '${{ matrix.method }}' --seed '${{ matrix.seed }}' \
+            --rounds 80 --local-episodes 4 --local-steps 4 \
+            --eval-episodes 25 --kappa 0.2 \
+            --out 'results/traffic_full/${{ matrix.method }}/${{ matrix.seed }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: traffic-full-${{ matrix.method }}-${{ matrix.seed }}-${{ github.sha }}
+          path: results/traffic_full/
+          if-no-files-found: error
+          retention-days: 90
+  audit:
+    needs: train
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install numpy==1.26.4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: traffic-full-*
+          merge-multiple: true
+          path: results/traffic_full
+      - name: Fail-closed 60/60 independent audit
+        run: |
+          python experiments/traffic_full/audit.py \
+            --root results/traffic_full --report results/traffic_full_audit
+          python experiments/traffic_full/summarize.py \
+            --per-seed results/traffic_full_audit/per_seed.csv \
+            --output results/traffic_full_audit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: traffic-full-audit-${{ github.sha }}
+          path: results/traffic_full_audit
+          if-no-files-found: warn
+          retention-days: 90
