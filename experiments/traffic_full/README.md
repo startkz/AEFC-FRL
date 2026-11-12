@@ -10,7 +10,7 @@ This package reconstructs a traffic-domain implementation containing:
 - matched-budget FedRL (same actor/critic/backbone, dense aggregation); separate **no-adapter** and **no-prototype** component ablations;
 - one sign-flip adversarial client per run, chosen as `seed % 5`, as in the historical linear PoC;
 - 80 rounds, five clients, four 60-step training episodes per client/round, 25 held-out episodes per client, fifteen independent seeds;
-- exact application-message serialization bytes, 1600 training-episode records and 125 held-out records per seed/method, round logs, model.pt and SHA256 manifest.
+- exact application-message serialization bytes, 1600 training-episode records and 125 held-out records per seed/method with **all 60 physical steps per episode**, round logs, model.pt and SHA256 manifest.
 
 **Terminology**: The previous `startkz/AEFC` `iotj_bridge/traffic_no_oracle.py` is only a *linear-sparse historical control*, despite its `AEFC-FRL` text label. Neither it nor the new training code should be represented as a verbatim reproduction of an unpublished/unavailable original Simulink--Python implementation. This new reconstruction implements the listed components, but algorithmic parity with the *correct IoT-J AEFC-FRL manuscript and frozen hyperparameters* still requires source-by-source confirmation before journal claims.
 
@@ -45,3 +45,5 @@ Each evaluation episode uses a deterministic method-independent stream for exoge
 - The no-prototype ablation removes both local alignment and prototype exchange; it is **not** necessarily the prior `proto_alignment_off` ablation.
 - Nonpositive, mixed or adverse results must be retained without retuning rewards or seeds.
 - Do not assert monotonic return improvements or uniform critic error bounds from finite-horizon empirical diagnostics.
+
+The independent auditor recomputes all queue state transitions, delayed actions, per-step rewards, congestion and five-step recovery/censoring from the archived physical trace. The FedRL comparator uses **unclipped dense averaging**; sparsity and update clipping are AEFC-specific.

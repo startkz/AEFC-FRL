@@ -135,10 +135,15 @@ class Client:
     def episode(self, seed, index, stage, explore=True, train=True):
         env=TrafficEnv(self.cid,seed,index,stage)
         rng=np.random.default_rng(sseed(seed,self.cid,index,stage,5))
-        total=0.; queues=[]; violations=0; recovered=-1; safe_run=0; dwell=-1
+        total=0.; queues=[]; violations=0; recovered=-1; safe_run=0; dwell=-1; physical_trace=[]
         while env.t<HORIZON:
             t=env.t; obs=env.obs(); act=self.action(obs,rng,explore)
+            applied = env.prev_action if 15 <= t < 32 and self.cid % 2 == 0 else act
+            exogenous_arrivals = env.arrivals[t].copy()
             reward,q,unsafe,done=env.step(act)
+            physical_trace.append([t, float(env.q[0]), float(env.q[1]), int(env.phase), int(act),
+                                   int(applied), float(exogenous_arrivals[0]), float(exogenous_arrivals[1]),
+                                   float(reward)])
             nxt=env.obs() if not done else np.zeros(OBS,dtype=np.float32)
             if train:self.replay.add((obs,act,reward,nxt,float(done),int(obs[3])))
             total+=reward;queues.append(q);violations+=int(unsafe)
@@ -153,7 +158,7 @@ class Client:
                 "avg_queue":float(np.mean(queues)),"terminal_queue":float(queues[-1]),
                 "attack_window_success":int(recovered>0),"attack_window_recovery_step":recovered,
                 "safe_dwell5":int(dwell>=0),"recovery_step":dwell,"right_censored":int(dwell<0),
-                "unsafe_steps":violations}
+                "unsafe_steps":violations,"physical_trace":physical_trace}
 
     def prototypes(self, last=512):
         groups={0:[],1:[]}
@@ -237,7 +242,7 @@ def aggregate(messages, method, template, malicious_cid, max_norm=.45):
             weight=max(0.02,float(m["utility"]))
         if cid==malicious_cid:v=-3*v
         magnitude=float(np.linalg.norm(v))
-        if magnitude>max_norm:v=v*(max_norm/magnitude)
+        if method!="FedRL" and magnitude>max_norm:v=v*(max_norm/magnitude)
         vectors.append(v);weights.append(weight)
     weights=np.asarray(weights,float);weights=weights/weights.sum()
     delta=(np.stack(vectors,axis=0)*weights[:,None]).sum(axis=0)

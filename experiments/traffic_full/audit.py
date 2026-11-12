@@ -19,6 +19,37 @@ def validate_row(row):
     assert row['unsafe_steps']>=0 and row['unsafe_steps']<=60
     assert row['recovery_step'] == -1 or 32 <= row['recovery_step'] <= 55
     assert row['attack_window_recovery_step']==-1 or 1<=row['attack_window_recovery_step']<=17
+    # Independently reconstruct physical service, reward, congestion and both endpoints.
+    steps=row.get('physical_trace')
+    assert isinstance(steps,list) and len(steps)==60,'missing full physical trace'
+    cid=int(row['client'])
+    q=np.array([8.+cid,6.+0.5*cid]); phase=0; prev=0
+    sums=[]; total_reward=0.; unsafe_count=0; historical=-1; dwell=-1; run=0
+    for t,rec in enumerate(steps):
+        step,qa,qb,phase_record,proposed,applied,arr_a,arr_b,reward=rec
+        assert int(step)==t and proposed in (0,1) and applied in (0,1)
+        expected_applied = prev if 15<=t<32 and cid%2==0 else proposed
+        assert applied==expected_applied,'delayed actuator mismatch'
+        assert phase_record==applied
+        assert arr_a>=0 and arr_b>=0 and float(arr_a).is_integer() and float(arr_b).is_integer()
+        service=np.array([5.4,1.]) if applied==0 else np.array([1.,5.4])
+        q=np.maximum(0.,q+np.array([arr_a,arr_b])-service)
+        assert np.allclose(q,[qa,qb],rtol=0,atol=1e-8),'physical queue mismatch'
+        unsafe=bool(q.max()>35.)
+        expect_reward=-float(q.sum())-0.6*int(applied!=phase)-2.*int(unsafe)
+        assert abs(reward-expect_reward)<1e-8,'reward mismatch'
+        total_reward+=reward; unsafe_count+=int(unsafe);sums.append(float(q.sum()))
+        if 15<=t<32 and q.sum()<18 and historical<0:historical=t-15+1
+        if t>=32 and q.sum()<18 and not unsafe:run+=1
+        else:run=0
+        if dwell<0 and run>=5:dwell=t-4
+        phase=applied; prev=proposed
+    assert row['attack_window_recovery_step']==historical
+    assert row['recovery_step']==dwell
+    assert row['unsafe_steps']==unsafe_count
+    assert abs(row['return']-total_reward)<1e-8
+    assert abs(row['avg_queue']-float(np.mean(sums)))<1e-8
+    assert abs(row['terminal_queue']-sums[-1])<1e-8
     for k in ('return','avg_queue','terminal_queue'): assert math.isfinite(row[k])
 
 def audit(root, expected_rounds=80, expected_local_eps=4, expected_eval=25):
